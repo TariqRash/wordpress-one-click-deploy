@@ -1,14 +1,14 @@
-FROM wordpress:latest
+FROM wordpress:apache
 
-# Install additional tools
+# Install necessary tools
 RUN apt-get update && apt-get install -y \
+    default-mysql-client \
     vim \
     nano \
     curl \
     wget \
     git \
     unzip \
-    ssl-cert \
     && rm -rf /var/lib/apt/lists/*
 
 # Arabic language support
@@ -21,75 +21,69 @@ ENV LANG=ar_SA.UTF-8
 ENV LANGUAGE=ar_SA:ar
 ENV LC_ALL=ar_SA.UTF-8
 
-# Enable Apache SSL module and required modules
-RUN a2enmod ssl \
-    && a2enmod rewrite \
-    && a2enmod headers \
-    && a2enmod socache_shmcb
+# Enable Apache modules for rewrite and headers
+RUN a2enmod rewrite headers remoteip
 
-# Create self-signed SSL certificate (for development/fallback)
-RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/ssl/private/apache-selfsigned.key \
-    -out /etc/ssl/certs/apache-selfsigned.crt \
-    -subj "/C=SA/ST=Riyadh/L=Riyadh/O=Holberton/OU=IT/CN=localhost"
-
-# Configure Apache for both HTTP and HTTPS
-RUN echo '<VirtualHost *:80>' > /etc/apache2/sites-available/000-default.conf && \
+# Create custom Apache configuration for dynamic PORT
+RUN echo '<VirtualHost *:${PORT}>' > /etc/apache2/sites-available/000-default.conf && \
     echo '    ServerAdmin webmaster@localhost' >> /etc/apache2/sites-available/000-default.conf && \
     echo '    DocumentRoot /var/www/html' >> /etc/apache2/sites-available/000-default.conf && \
     echo '' >> /etc/apache2/sites-available/000-default.conf && \
-    echo '    # Redirect to HTTPS if X-Forwarded-Proto is not set (for Railway/Render)' >> /etc/apache2/sites-available/000-default.conf && \
-    echo '    RewriteEngine On' >> /etc/apache2/sites-available/000-default.conf && \
-    echo '    RewriteCond %{HTTP:X-Forwarded-Proto} !https' >> /etc/apache2/sites-available/000-default.conf && \
-    echo '    RewriteCond %{HTTPS} off' >> /etc/apache2/sites-available/000-default.conf && \
-    echo '    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '    # Trust X-Forwarded-Proto from Render proxy' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '    SetEnvIf X-Forwarded-Proto "https" HTTPS=on' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '    <Directory /var/www/html>' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '        Options Indexes FollowSymLinks' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '        AllowOverride All' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '        Require all granted' >> /etc/apache2/sites-available/000-default.conf && \
+    echo '    </Directory>' >> /etc/apache2/sites-available/000-default.conf && \
     echo '' >> /etc/apache2/sites-available/000-default.conf && \
     echo '    ErrorLog ${APACHE_LOG_DIR}/error.log' >> /etc/apache2/sites-available/000-default.conf && \
     echo '    CustomLog ${APACHE_LOG_DIR}/access.log combined' >> /etc/apache2/sites-available/000-default.conf && \
     echo '</VirtualHost>' >> /etc/apache2/sites-available/000-default.conf
 
-# Configure HTTPS VirtualHost
-RUN echo '<VirtualHost *:443>' > /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    ServerAdmin webmaster@localhost' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    DocumentRoot /var/www/html' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    SSLEngine on' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    SSLCertificateFile /etc/ssl/certs/apache-selfsigned.crt' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    SSLCertificateKeyFile /etc/ssl/private/apache-selfsigned.key' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    # Security headers' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    Header always set X-Frame-Options "SAMEORIGIN"' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    Header always set X-Content-Type-Options "nosniff"' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    Header always set X-XSS-Protection "1; mode=block"' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    <Directory /var/www/html>' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '        Options Indexes FollowSymLinks' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '        AllowOverride All' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '        Require all granted' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    </Directory>' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    ErrorLog ${APACHE_LOG_DIR}/error.log' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '    CustomLog ${APACHE_LOG_DIR}/access.log combined' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '</VirtualHost>' >> /etc/apache2/sites-available/default-ssl.conf
+# Create custom ports.conf that uses PORT env variable
+RUN echo 'Listen ${PORT}' > /etc/apache2/ports.conf
 
-# Enable SSL site
-RUN a2ensite default-ssl
-
-# Update ports.conf to listen on both 80 and 443
-RUN echo 'Listen 80' > /etc/apache2/ports.conf && \
-    echo '<IfModule ssl_module>' >> /etc/apache2/ports.conf && \
-    echo '    Listen 443' >> /etc/apache2/ports.conf && \
-    echo '</IfModule>' >> /etc/apache2/ports.conf && \
-    echo '<IfModule mod_gnutls.c>' >> /etc/apache2/ports.conf && \
-    echo '    Listen 443' >> /etc/apache2/ports.conf && \
-    echo '</IfModule>' >> /etc/apache2/ports.conf
+# Create entrypoint script
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'set -e' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Use PORT from Render or default to 80' >> /entrypoint.sh && \
+    echo 'export PORT=${PORT:-80}' >> /entrypoint.sh && \
+    echo 'echo "Starting Apache on port $PORT"' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Wait for database' >> /entrypoint.sh && \
+    echo 'if [ -n "$WORDPRESS_DB_HOST" ]; then' >> /entrypoint.sh && \
+    echo '    echo "Waiting for database..."' >> /entrypoint.sh && \
+    echo '    until mysqladmin ping -h"$WORDPRESS_DB_HOST" --silent 2>/dev/null; do' >> /entrypoint.sh && \
+    echo '        echo "Database not ready, waiting..."' >> /entrypoint.sh && \
+    echo '        sleep 2' >> /entrypoint.sh && \
+    echo '    done' >> /entrypoint.sh && \
+    echo '    echo "Database is ready!"' >> /entrypoint.sh && \
+    echo 'fi' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Create wp-config.php with HTTPS support if it does not exist' >> /entrypoint.sh && \
+    echo 'if [ ! -f /var/www/html/wp-config.php ] && [ -f /var/www/html/wp-config-sample.php ]; then' >> /entrypoint.sh && \
+    echo '    cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo '    ' >> /entrypoint.sh && \
+    echo '    # Add HTTPS detection before the stop editing line' >> /entrypoint.sh && \
+    echo '    sed -i "/stop editing/i\\\\" /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo '    sed -i "/stop editing/i// Force HTTPS when behind Render proxy" /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo '    sed -i "/stop editing/i if (isset(\$_SERVER['"'"'HTTP_X_FORWARDED_PROTO'"'"']) && \$_SERVER['"'"'HTTP_X_FORWARDED_PROTO'"'"'] === '"'"'https'"'"') {" /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo '    sed -i "/stop editing/i\    \$_SERVER['"'"'HTTPS'"'"'] = '"'"'on'"'"';" /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo '    sed -i "/stop editing/i }" /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo '    sed -i "/stop editing/i\\\\" /var/www/html/wp-config.php' >> /entrypoint.sh && \
+    echo 'fi' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Execute WordPress entrypoint' >> /entrypoint.sh && \
+    echo 'exec docker-entrypoint.sh apache2-foreground' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
 # Set proper permissions
 RUN chown -R www-data:www-data /var/www/html
 
-# Expose both HTTP and HTTPS ports
-EXPOSE 80 443
+# Expose PORT (Render will inject the actual port number)
+EXPOSE ${PORT:-80}
 
-# Start Apache
-CMD ["apache2-foreground"]
+ENTRYPOINT ["/entrypoint.sh"]
