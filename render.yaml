@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: wordpress-holberton
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: WORDPRESS_DB_HOST
+        fromDatabase:
+          name: wordpress-db
+          property: host
+      - key: WORDPRESS_DB_USER
+        fromDatabase:
+          name: wordpress-db
+          property: user
+      - key: WORDPRESS_DB_PASSWORD
+        fromDatabase:
+          name: wordpress-db
+          property: password
+      - key: WORDPRESS_DB_NAME
+        value: wordpress
+      - key: WORDPRESS_TABLE_PREFIX
+        value: wp_
+      - key: WORDPRESS_CONFIG_EXTRA
+        value: |
+          define('FORCE_SSL_ADMIN', true);
+          if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+              $_SERVER['HTTPS'] = 'on';
+          }
+          define('WP_HOME', 'https://' . $_SERVER['HTTP_HOST']);
+          define('WP_SITEURL', 'https://' . $_SERVER['HTTP_HOST']);
+
+databases:
+  - name: wordpress-db
+    plan: free
+    databaseName: wordpress
+    user: wordpress
